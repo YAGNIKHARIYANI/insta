@@ -1,0 +1,10 @@
+credentials.txt
+cookies.pkl
+chrome_profile/
+__pycache__/
+*.har
+*.txt
+!requirements.txt
+venv/
+.idea/
+.vscode/
