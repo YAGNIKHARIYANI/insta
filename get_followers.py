@@ -144,7 +144,8 @@ def login_if_needed(driver):
 def extract_followers_from_profile(driver, username, max_per_user=50):
     print(f"[+] Navigating to profile: https://www.instagram.com/{username}/")
     driver.get(f"https://www.instagram.com/{username}/")
-    time.sleep(3.5)
+    # Increased profile load wait to 5 seconds
+    time.sleep(5.0)
 
     page_text = driver.page_source.lower()
     # Check if account is private or unavailable
@@ -162,18 +163,22 @@ def extract_followers_from_profile(driver, username, max_per_user=50):
 
     try:
         followers_links[0].click()
-        time.sleep(3)
+        # Increased wait to 5 seconds after clicking followers link to allow modal to load
+        print(f"[+] Followers link clicked for @{username}. Waiting 5s for followers modal...")
+        time.sleep(5.0)
     except Exception:
         print(f"[!] Could not click followers link on @{username}.")
         return [], False
 
     try:
-        modal = WebDriverWait(driver, 8).until(
+        modal = WebDriverWait(driver, 10).until(
             EC.presence_of_element_located((By.XPATH, "//div[@role='dialog']"))
         )
     except Exception:
         print(f"[!] Followers modal did not open for @{username}.")
         return [], False
+
+    time.sleep(2.0)
 
     scrollable_div = driver.execute_script("""
         const dialog = arguments[0];
@@ -184,10 +189,10 @@ def extract_followers_from_profile(driver, username, max_per_user=50):
         }) || dialog;
     """, modal)
 
-    # Scroll multiple times to render followers in modal
-    for _ in range(8):
+    # Scroll 10 times with 1.5s delay to trigger infinite scroll for all 50 items
+    for _ in range(10):
         driver.execute_script("arguments[0].scrollTop = arguments[0].scrollHeight;", scrollable_div)
-        time.sleep(0.8)
+        time.sleep(1.5)
 
     extracted = set()
     links = modal.find_elements(By.TAG_NAME, "a")
