@@ -3,7 +3,7 @@ import time
 import pickle
 import sys
 import re
-from collections import deque
+from datetime import datetime
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
@@ -21,6 +21,14 @@ from selenium.webdriver.support import expected_conditions as EC
 COOKIES_FILE = "cookies.pkl"
 CREDENTIALS_FILE = "credentials.txt"
 PROFILE_DIR = os.path.abspath("chrome_profile")
+POST_LINKS_FILE = "post_links.txt"
+
+SYSTEM_EXCLUDED_USERNAMES = {
+    "explore", "direct", "stories", "reels", "p", "reel", "about", "privacy",
+    "terms", "help", "api", "jobs", "locations", "threads", "muse", "meta",
+    "meta_ai", "contact", "instagram_lite", "popular", "web", "blog", "legal",
+    "accounts", "download", "press", "cookies"
+}
 
 
 def load_credentials():
@@ -149,74 +157,35 @@ def login_if_needed(driver):
         return False
 
 
-def save_followers_to_file(filename, followers_list):
+def scrape_commenters_from_post(driver, post_url, my_username=""):
+    print(f"\n[+] Navigating to Post/Reel: {post_url}")
     try:
-        with open(filename, "w", encoding="utf-8") as f:
-            for uname in followers_list:
-                f.write(f"{uname}\n")
-        with open("followers.txt", "w", encoding="utf-8") as f:
-            for uname in followers_list:
-                f.write(f"{uname}\n")
-    except Exception as e:
-        print(f"[!] Error saving progress to file: {e}")
+        driver.get(post_url)
+        time.sleep(4.0)
 
+        # Expand comments by clicking "View more comments", "Load more comments" or + buttons
+        print("[+] Expanding comments on post...")
+        for step in range(12):
+            buttons = driver.find_elements(
+                By.XPATH,
+                "//button[contains(., 'View more comments')] | //button[contains(., 'Load more comments')] | //svg[@aria-label='Load more comments']/ancestor::button | //ul//button[.//svg]"
+            )
+            clicked = False
+            for b in buttons:
+                try:
+                    if b.is_displayed():
+                        driver.execute_script("arguments[0].click();", b)
+                        clicked = True
+                        time.sleep(1.2)
+                except Exception:
+                    pass
 
-def load_existing_followers(filename):
-    followers = []
-    if os.path.exists(filename):
-        try:
-            with open(filename, "r", encoding="utf-8") as f:
-                followers = [line.strip() for line in f if line.strip() and not line.startswith("#")]
-            print(f"[+] Resuming from existing '{filename}' with {len(followers)} saved followers!")
-        except Exception:
-            pass
-    return followers
+            driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+            time.sleep(1.2)
 
+        post_commenters = set()
+        links = driver.find_elements(By.TAG_NAME, "a")
 
-def extract_followers_from_profile(driver, username, max_per_user=50):
-    try:
-        print(f"[+] Navigating to profile: https://www.instagram.com/{username}/")
-        driver.get(f"https://www.instagram.com/{username}/")
-        time.sleep(5.0)
-
-        page_text = driver.page_source.lower()
-        if "this account is private" in page_text:
-            print(f"[-] @{username} is private. Skipping and removing from output.")
-            return [], True
-
-        followers_links = driver.find_elements(By.XPATH, f"//a[contains(@href, '/followers/')] | //a[contains(@href, '/{username}/followers')]")
-        if not followers_links:
-            followers_links = driver.find_elements(By.XPATH, "//span[contains(text(), 'followers')]/ancestor::a | //a[contains(., 'followers')]")
-
-        if not followers_links:
-            print(f"[!] Followers link not found on @{username}'s profile.")
-            return [], False
-
-        followers_links[0].click()
-        print(f"[+] Followers link clicked for @{username}. Waiting 5s for followers modal...")
-        time.sleep(5.0)
-
-        modal = WebDriverWait(driver, 10).until(
-            EC.presence_of_element_located((By.XPATH, "//div[@role='dialog']"))
-        )
-
-        time.sleep(2.0)
-
-        scrollable_div = driver.execute_script("""
-            const dialog = arguments[0];
-            const divs = Array.from(dialog.querySelectorAll('div'));
-            return divs.find(d => {
-                const style = window.getComputedStyle(d);
-                return style.overflowY === 'scroll' || style.overflowY === 'auto';
-            }) || dialog;
-        """, modal)
-
-        for _ in range(10):
-            driver.execute_script("arguments[0].scrollTop = arguments[0].scrollHeight;", scrollable_div)
-            time.sleep(1.5)
-
-        extracted = set()
-        links = modal.find_elements(By.TAG_NAME, "a")
         for link in links:
             try:
                 href = link.get_attribute("href")
@@ -224,91 +193,126 @@ def extract_followers_from_profile(driver, username, max_per_user=50):
                     clean_path = href.split("instagram.com/")[-1].strip("/")
                     parts = [p for p in clean_path.split("/") if p]
                     if parts:
-                        uname = parts[0]
-                        if uname not in ["explore", "direct", "stories", "reels", username] and not uname.startswith("?") and not uname.startswith("#"):
-                            extracted.add(uname)
-                            if len(extracted) >= max_per_user:
-                                break
+                        uname = parts[0].lower()
+                        if (
+                            uname not in SYSTEM_EXCLUDED_USERNAMES
+                            and uname != my_username
+                            and not uname.startswith("?")
+                            and not uname.startswith("#")
+                            and not uname.isdigit()
+                        ):
+                            # Retain original username case from link text or URL
+                            original_uname = parts[0]
+                            post_commenters.add(original_uname)
             except Exception:
                 pass
 
-        return list(extracted), False
+        print(f"[+] Successfully extracted {len(post_commenters)} unique commenters from this post.")
+        return post_commenters
 
     except (NoSuchWindowException, WebDriverException) as e:
-        print(f"[!] Browser window was closed or disconnected during @{username} crawl.")
+        print(f"[!] Browser window was closed or disconnected during crawl.")
         raise e
     except Exception as e:
-        print(f"[!] Error inspecting @{username}: {e}")
-        return [], False
+        print(f"[!] Error processing post {post_url}: {e}")
+        return set()
 
 
-def fetch_followers_tree(target_username, target_count, output_filename):
+def save_commenters_to_file(output_filename, commenters_list):
+    try:
+        with open(output_filename, "w", encoding="utf-8") as f:
+            for uname in commenters_list:
+                f.write(f"{uname}\n")
+
+        with open("followers.txt", "w", encoding="utf-8") as f:
+            for uname in commenters_list:
+                f.write(f"{uname}\n")
+        print(f"[+] Updated 'followers.txt' with {len(commenters_list)} commenters!")
+    except Exception as e:
+        print(f"[!] Error saving output files: {e}")
+
+
+def load_post_links_from_file():
+    links = []
+    if os.path.exists(POST_LINKS_FILE):
+        try:
+            with open(POST_LINKS_FILE, "r", encoding="utf-8") as f:
+                links = [line.strip() for line in f if line.strip() and "instagram.com/" in line]
+        except Exception:
+            pass
+    return links
+
+
+def main():
+    print("=" * 60)
+    print("      Instagram Post & Reel Commenter Scraper - 2026   ")
+    print("=" * 60)
+
+    post_urls = []
+
+    # Priority 1: Command line arguments
+    if len(sys.argv) > 1:
+        post_urls = [arg.strip() for arg in sys.argv[1:] if "instagram.com/" in arg]
+
+    # Priority 2: post_links.txt file
+    if not post_urls:
+        post_urls = load_post_links_from_file()
+        if post_urls:
+            print(f"[+] Loaded {len(post_urls)} post URL(s) from '{POST_LINKS_FILE}'.")
+
+    # Priority 3: Interactive Prompt / Default Provided URLs
+    if not post_urls:
+        print("\nEnter Instagram post/reel URLs (separated by spaces or commas).")
+        print("Or press ENTER to scrape the 3 default provided reel/post links:")
+        user_input = input("Post URLs: ").strip()
+
+        if user_input:
+            post_urls = [u.strip() for u in re.split(r'[\s,]+', user_input) if "instagram.com/" in u]
+        else:
+            post_urls = [
+                "https://www.instagram.com/reel/DakwphaAifc/",
+                "https://www.instagram.com/p/DV1HfcyDlru/",
+                "https://www.instagram.com/p/DP83EtNjVvW/"
+            ]
+
+    if not post_urls:
+        print("[!] No valid Instagram post URLs provided. Exiting.")
+        return
+
+    print(f"\n[+] Processing {len(post_urls)} post/reel URL(s):")
+    for idx, u in enumerate(post_urls, 1):
+        print(f"  {idx}. {u}")
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    output_filename = f"commenters_{timestamp}.txt"
+
     driver = None
-    existing_list = load_existing_followers(output_filename)
-    collected_followers = set(existing_list)
-    visited_accounts = set()
-
-    queue = deque([(target_username, 1, "ROOT")])
-
-    for ex in existing_list:
-        queue.append((ex, 2, target_username))
+    all_commenters = set()
 
     try:
         driver = get_stealth_driver(headless=False)
         if not login_if_needed(driver):
             print("[!] Cannot proceed without logged in session.")
-            return list(collected_followers)
+            return
 
         creds = load_credentials()
         my_username = creds[0].lower() if creds else ""
 
-        print(f"\n[+] Starting Tree Crawler for target @{target_username} (Goal: {target_count} followers)...")
-
-        node_counter = 0
-        while queue and len(collected_followers) < target_count:
-            current_user, level, parent = queue.popleft()
-            uname_lower = current_user.lower()
-
-            if uname_lower in visited_accounts or uname_lower == my_username:
-                continue
-
-            visited_accounts.add(uname_lower)
-            node_counter += 1
-
-            print(f"\n[Tree Level {level} | Node #{node_counter}] Processing @{current_user} (Parent: @{parent})")
-            print(f"[+] Total Unique Followers Collected: {len(collected_followers)} / {target_count}")
-
+        for idx, url in enumerate(post_urls, 1):
+            print(f"\n[Post #{idx}/{len(post_urls)}] Scraping commenters...")
             try:
-                followers_batch, is_private = extract_followers_from_profile(driver, current_user, max_per_user=50)
+                post_users = scrape_commenters_from_post(driver, url, my_username=my_username)
+                all_commenters.update(post_users)
+                print(f"[+] Total unique commenters collected so far: {len(all_commenters)}")
+
+                # Save progress after every post
+                save_commenters_to_file(output_filename, list(all_commenters))
             except NoSuchWindowException:
-                print("\n[!] Browser window closed by user. Auto-saving progress and stopping gracefully...")
+                print("\n[!] Browser window closed by user. Auto-saving progress...")
                 break
             except WebDriverException as e:
                 print(f"\n[!] Browser connection error: {e}. Auto-saving progress...")
                 break
-
-            if is_private:
-                if current_user in collected_followers:
-                    collected_followers.remove(current_user)
-                    print(f"[-] Removed private account @{current_user} from followers list.")
-                continue
-
-            added_count = 0
-            for f in followers_batch:
-                f_lower = f.lower()
-                if f_lower not in collected_followers and f_lower != target_username.lower() and f_lower != my_username:
-                    collected_followers.add(f)
-                    added_count += 1
-                    queue.append((f, level + 1, current_user))
-                    if len(collected_followers) >= target_count:
-                        break
-
-            print(f"[+] Found {len(followers_batch)} followers from @{current_user}. Added {added_count} new unique accounts. Total: {len(collected_followers)} / {target_count}")
-
-            # Incremental auto-save after every node
-            save_followers_to_file(output_filename, list(collected_followers))
-
-            time.sleep(1.5)
 
     finally:
         if driver:
@@ -317,44 +321,11 @@ def fetch_followers_tree(target_username, target_count, output_filename):
             except Exception:
                 pass
 
-    return list(collected_followers)[:target_count]
-
-
-def main():
-    print("=" * 60)
-    print("      Instagram Tree Follower Collector - 2026        ")
-    print("=" * 60)
-
-    if len(sys.argv) >= 3:
-        target_username = sys.argv[1].strip()
-        try:
-            max_count = int(sys.argv[2])
-        except ValueError:
-            max_count = 5000
+    if all_commenters:
+        save_commenters_to_file(output_filename, list(all_commenters))
+        print(f"\n[SUCCESS] Saved {len(all_commenters)} unique commenters to '{output_filename}' and 'followers.txt'!")
     else:
-        target_username = input("Enter target Instagram username (e.g. flstudio): ").strip()
-        count_str = input("Enter number of followers to scrape (default 5000): ").strip()
-        try:
-            max_count = int(count_str) if count_str else 5000
-        except ValueError:
-            max_count = 5000
-
-    if not target_username:
-        print("[!] No username provided. Exiting.")
-        return
-
-    output_filename = f"{target_username}_followers_{max_count}.txt"
-    print(f"\n[+] Target Account: {target_username}")
-    print(f"[+] Target Follower Goal: {max_count}")
-    print(f"[+] Output File: {output_filename}\n")
-
-    followers = fetch_followers_tree(target_username, max_count, output_filename)
-
-    if followers:
-        save_followers_to_file(output_filename, followers)
-        print(f"\n[SUCCESS] Saved {len(followers)} unique followers to '{output_filename}' and 'followers.txt'!")
-    else:
-        print("[!] No followers retrieved.")
+        print("[!] No commenters retrieved.")
 
 
 if __name__ == "__main__":
