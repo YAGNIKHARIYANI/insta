@@ -7,7 +7,6 @@ from datetime import datetime
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
-from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.chrome.options import Options
 from webdriver_manager.chrome import ChromeDriverManager
 from selenium.common.exceptions import (
@@ -103,8 +102,6 @@ def save_session_cookies(driver):
 
 def is_logged_in(driver):
     try:
-        driver.get("https://www.instagram.com/")
-        time.sleep(3)
         curr_url = driver.current_url.lower()
         if "login" not in curr_url and "auth_platform" not in curr_url:
             nav = driver.find_elements(By.CSS_SELECTOR, "svg[aria-label='Home'], svg[aria-label='Search'], nav")
@@ -116,9 +113,6 @@ def is_logged_in(driver):
 
 
 def login_if_needed(driver):
-    if is_logged_in(driver):
-        return True
-
     if load_saved_cookies(driver) and is_logged_in(driver):
         return True
 
@@ -128,53 +122,59 @@ def login_if_needed(driver):
         return False
 
     username, password = creds
-    print(f"[+] Logging in as @{username}...")
+    print(f"[+] Navigating to Instagram login for @{username}...")
     driver.get("https://www.instagram.com/accounts/login/")
     time.sleep(4)
 
+    curr_url = driver.current_url.lower()
+    if "login" not in curr_url and "auth_platform" not in curr_url:
+        print(f"[+] Already logged in as @{username}!")
+        save_session_cookies(driver)
+        return True
+
+    print(f"[+] Entering credentials from credentials.txt (@{username})...")
     try:
-        u_in = driver.find_element(By.CSS_SELECTOR, "input[name='email'], input[name='username'], input[type='text']")
-        p_in = driver.find_element(By.CSS_SELECTOR, "input[name='pass'], input[name='password'], input[type='password']")
+        user_inputs = driver.find_elements(By.CSS_SELECTOR, "input[name='email'], input[name='username'], input[type='text']")
+        pass_inputs = driver.find_elements(By.CSS_SELECTOR, "input[name='pass'], input[name='password'], input[type='password']")
 
-        u_in.clear()
-        for c in username:
-            u_in.send_keys(c)
-            time.sleep(0.02)
+        if user_inputs and pass_inputs:
+            u_in = user_inputs[0]
+            p_in = pass_inputs[0]
 
-        p_in.clear()
-        for c in password:
-            p_in.send_keys(c)
-            time.sleep(0.02)
+            u_in.clear()
+            for c in username:
+                u_in.send_keys(c)
+                time.sleep(0.02)
 
-        login_divs = driver.find_elements(By.XPATH, "//div[@role='button'][contains(., 'Log in')] | //button[contains(., 'Log in')]")
-        if login_divs:
-            try:
-                driver.execute_script("arguments[0].click();", login_divs[0])
-            except Exception:
-                pass
-        else:
-            p_in.send_keys(Keys.RETURN)
+            time.sleep(0.5)
 
-        print("\n" + "=" * 60)
-        print(f"[+] Credentials filled & login tapped for @{username}!")
-        print("[+] Waiting 40 seconds for login completion...")
-        print("=" * 60)
+            p_in.clear()
+            for c in password:
+                p_in.send_keys(c)
+                time.sleep(0.02)
 
-        for i in range(10):
-            time.sleep(4)
-            print(f"[+] Waiting for login completion... ({(i + 1) * 4}s / 40s)")
-            if is_logged_in(driver):
-                print(f"[+] Login successful for @{username}!")
-                save_session_cookies(driver)
-                return True
+            print("\n" + "=" * 60)
+            print(f"[+] Credentials filled for @{username}!")
+            print("[+] Waiting 60 seconds for manual login (NO refresh, NO auto-tap)...")
+            print("=" * 60)
+
+            for i in range(20):
+                time.sleep(3)
+                curr_url = driver.current_url.lower()
+                if "login" not in curr_url and "auth_platform" not in curr_url:
+                    print(f"[+] Login detected as complete for @{username}!")
+                    save_session_cookies(driver)
+                    return True
+                print(f"[+] Waiting for manual login tap... ({(i + 1) * 3}s / 60s)")
     except Exception as e:
         print(f"[!] Login error: {e}")
 
-    if is_logged_in(driver):
+    curr_url = driver.current_url.lower()
+    if "login" not in curr_url and "auth_platform" not in curr_url:
         save_session_cookies(driver)
         return True
     else:
-        print(f"[!] Login failed or security check triggered. Please check the browser window.")
+        print(f"[!] Login timeframe finished. Current URL: {driver.current_url}")
         return False
 
 
