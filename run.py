@@ -127,18 +127,21 @@ def save_session_cookies(driver):
 
 
 def is_logged_in(driver):
-    driver.get("https://www.instagram.com/")
-    time.sleep(3)
-    curr_url = driver.current_url.lower()
-    if "login" not in curr_url and "auth_platform" not in curr_url:
-        nav = driver.find_elements(By.CSS_SELECTOR, "svg[aria-label='Home'], svg[aria-label='Search'], nav")
-        if nav:
-            return True
+    try:
+        driver.get("https://www.instagram.com/")
+        time.sleep(3)
+        curr_url = driver.current_url.lower()
+        if "login" not in curr_url and "auth_platform" not in curr_url:
+            nav = driver.find_elements(By.CSS_SELECTOR, "svg[aria-label='Home'], svg[aria-label='Search'], nav")
+            if nav:
+                return True
+    except Exception:
+        pass
     return False
 
 
 def login_to_instagram(driver, username, password):
-    print("[+] Checking Instagram session...")
+    print(f"[+] Checking Instagram session for @{username}...")
     if is_logged_in(driver):
         print(f"[+] Already logged in as @{username}!")
         save_session_cookies(driver)
@@ -148,7 +151,6 @@ def login_to_instagram(driver, username, password):
     driver.get("https://www.instagram.com/accounts/login/")
     time.sleep(4)
 
-    # Perform credential login
     print(f"[+] Logging in with credentials from credentials.txt (@{username})...")
     try:
         user_inputs = driver.find_elements(By.CSS_SELECTOR, "input[name='email'], input[name='username'], input[type='text']")
@@ -161,14 +163,14 @@ def login_to_instagram(driver, username, password):
             u_in.clear()
             for char in username:
                 u_in.send_keys(char)
-                time.sleep(0.03)
+                time.sleep(0.02)
 
             time.sleep(0.5)
 
             p_in.clear()
             for char in password:
                 p_in.send_keys(char)
-                time.sleep(0.03)
+                time.sleep(0.02)
 
             time.sleep(1)
 
@@ -178,7 +180,7 @@ def login_to_instagram(driver, username, password):
             else:
                 p_in.send_keys(Keys.RETURN)
 
-            print("[+] Login form submitted. Waiting for redirection...")
+            print("[+] Login form submitted. Waiting 8s for redirection...")
             time.sleep(8)
     except Exception as e:
         print(f"[!] Login form interaction error: {e}")
@@ -187,17 +189,41 @@ def login_to_instagram(driver, username, password):
         print(f"[+] Login successful for @{username}!")
         save_session_cookies(driver)
         return True
+
+    # 2FA / Security Verification detection & 40 seconds wait
+    curr_url = driver.current_url.lower()
+    page_text = driver.page_source.lower()
+    is_2fa = (
+        "two_factor" in curr_url
+        or "challenge" in curr_url
+        or "auth_platform" in curr_url
+        or "verification" in curr_url
+        or "security code" in page_text
+        or "two-factor" in page_text
+        or "enter the code" in page_text
+        or "login" in curr_url
+    )
+
+    if is_2fa:
+        print("\n" + "=" * 60)
+        print("[!] TWO-FACTOR AUTHENTICATION / SECURITY CODE REQUIRED!")
+        print("[!] Waiting 40 seconds for you to enter the 2FA code in the browser...")
+        print("=" * 60)
+
+        for i in range(10):
+            time.sleep(4)
+            print(f"[+] Waiting for 2FA completion... ({ (i + 1) * 4 }s / 40s)")
+            if is_logged_in(driver):
+                print(f"[+] 2FA / Verification complete! Logged in as @{username}.")
+                save_session_cookies(driver)
+                return True
+
+    if is_logged_in(driver):
+        print(f"[+] Login successful for @{username}!")
+        save_session_cookies(driver)
+        return True
     else:
-        curr_url = driver.current_url
-        if "auth_platform" in curr_url or "challenge" in curr_url or "two_factor" in curr_url or "login" in curr_url:
-            print("\n[!] Instagram requested security verification.")
-            print("[!] Please complete the login in the opened browser window...")
-            for _ in range(12):
-                time.sleep(5)
-                if is_logged_in(driver):
-                    print(f"[+] Manual verification/login detected as complete for @{username}!")
-                    save_session_cookies(driver)
-                    return True
+        print(f"[!] Could not complete login for @{username}. Current URL: {driver.current_url}")
         return False
 
 

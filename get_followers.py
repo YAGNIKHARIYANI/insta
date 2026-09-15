@@ -7,6 +7,7 @@ from datetime import datetime
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
+from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.chrome.options import Options
 from webdriver_manager.chrome import ChromeDriverManager
 from selenium.common.exceptions import (
@@ -90,6 +91,16 @@ def load_saved_cookies(driver):
     return False
 
 
+def save_session_cookies(driver):
+    try:
+        cookies = driver.get_cookies()
+        with open(COOKIES_FILE, "wb") as f:
+            pickle.dump(cookies, f)
+        print(f"[+] Saved session cookies to {COOKIES_FILE}")
+    except Exception as e:
+        print(f"[!] Failed to save cookies: {e}")
+
+
 def is_logged_in(driver):
     try:
         driver.get("https://www.instagram.com/")
@@ -117,7 +128,7 @@ def login_if_needed(driver):
         return False
 
     username, password = creds
-    print(f"[+] Logging in as {username}...")
+    print(f"[+] Logging in as @{username}...")
     driver.get("https://www.instagram.com/accounts/login/")
     time.sleep(4)
 
@@ -146,14 +157,42 @@ def login_if_needed(driver):
         print(f"[!] Login error: {e}")
 
     if is_logged_in(driver):
-        try:
-            with open(COOKIES_FILE, "wb") as f:
-                pickle.dump(driver.get_cookies(), f)
-        except Exception:
-            pass
+        save_session_cookies(driver)
+        return True
+
+    # 2FA / Security Verification detection & 40 seconds wait
+    curr_url = driver.current_url.lower()
+    page_text = driver.page_source.lower()
+    is_2fa = (
+        "two_factor" in curr_url
+        or "challenge" in curr_url
+        or "auth_platform" in curr_url
+        or "verification" in curr_url
+        or "security code" in page_text
+        or "two-factor" in page_text
+        or "enter the code" in page_text
+        or "login" in curr_url
+    )
+
+    if is_2fa:
+        print("\n" + "=" * 60)
+        print("[!] TWO-FACTOR AUTHENTICATION / SECURITY CODE REQUIRED!")
+        print("[!] Waiting 40 seconds for you to enter the 2FA code in the browser...")
+        print("=" * 60)
+
+        for i in range(10):
+            time.sleep(4)
+            print(f"[+] Waiting for 2FA completion... ({ (i + 1) * 4 }s / 40s)")
+            if is_logged_in(driver):
+                print(f"[+] 2FA / Verification complete! Logged in as @{username}.")
+                save_session_cookies(driver)
+                return True
+
+    if is_logged_in(driver):
+        save_session_cookies(driver)
         return True
     else:
-        print("[!] Login failed or security check triggered. Please check the browser window.")
+        print(f"[!] Login failed or security check triggered. Please check the browser window.")
         return False
 
 
@@ -163,19 +202,16 @@ def scrape_commenters_from_post(driver, post_url, my_username=""):
         driver.get(post_url)
         time.sleep(4.0)
 
-        # Expand comments by clicking "View more comments", "Load more comments" or + buttons
         print("[+] Expanding comments on post...")
         for step in range(12):
             buttons = driver.find_elements(
                 By.XPATH,
                 "//button[contains(., 'View more comments')] | //button[contains(., 'Load more comments')] | //svg[@aria-label='Load more comments']/ancestor::button | //ul//button[.//svg]"
             )
-            clicked = False
             for b in buttons:
                 try:
                     if b.is_displayed():
                         driver.execute_script("arguments[0].click();", b)
-                        clicked = True
                         time.sleep(1.2)
                 except Exception:
                     pass
@@ -201,7 +237,6 @@ def scrape_commenters_from_post(driver, post_url, my_username=""):
                             and not uname.startswith("#")
                             and not uname.isdigit()
                         ):
-                            # Retain original username case from link text or URL
                             original_uname = parts[0]
                             post_commenters.add(original_uname)
             except Exception:
@@ -250,17 +285,14 @@ def main():
 
     post_urls = []
 
-    # Priority 1: Command line arguments
     if len(sys.argv) > 1:
         post_urls = [arg.strip() for arg in sys.argv[1:] if "instagram.com/" in arg]
 
-    # Priority 2: post_links.txt file
     if not post_urls:
         post_urls = load_post_links_from_file()
         if post_urls:
             print(f"[+] Loaded {len(post_urls)} post URL(s) from '{POST_LINKS_FILE}'.")
 
-    # Priority 3: Interactive Prompt / Default Provided URLs
     if not post_urls:
         print("\nEnter Instagram post/reel URLs (separated by spaces or commas).")
         print("Or press ENTER to scrape the 3 default provided reel/post links:")
@@ -305,7 +337,6 @@ def main():
                 all_commenters.update(post_users)
                 print(f"[+] Total unique commenters collected so far: {len(all_commenters)}")
 
-                # Save progress after every post
                 save_commenters_to_file(output_filename, list(all_commenters))
             except NoSuchWindowException:
                 print("\n[!] Browser window closed by user. Auto-saving progress...")
