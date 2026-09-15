@@ -1,6 +1,5 @@
 import os
 import time
-import json
 import pickle
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
@@ -12,7 +11,6 @@ from selenium.common.exceptions import NoSuchElementException, TimeoutException
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
-HAR_FILE = "www.instagram.com.har"
 COOKIES_FILE = "cookies.pkl"
 CREDENTIALS_FILE = "credentials.txt"
 FOLLOWERS_FILE = "followers.txt"
@@ -66,60 +64,6 @@ def remove_username_from_file(username, file_path):
         for line in lines:
             if line.strip() != username:
                 file.write(line)
-
-
-def extract_cookies_from_har(har_path):
-    """Attempt to parse valid Instagram session cookies from a HAR file."""
-    if not os.path.exists(har_path):
-        return None
-
-    file_size = os.path.getsize(har_path)
-    if file_size == 0:
-        print(f"[!] Warning: HAR file '{har_path}' is empty (0 bytes). Skipping HAR cookie extraction.")
-        return None
-
-    print(f"[+] Processing HAR file '{har_path}' ({file_size} bytes)...")
-    try:
-        with open(har_path, "r", encoding="utf-8") as f:
-            har_data = json.load(f)
-
-        cookies = []
-        entries = har_data.get("log", {}).get("entries", [])
-        for entry in entries:
-            req = entry.get("request", {})
-            # Read HAR request cookies
-            for c in req.get("cookies", []):
-                cookies.append({
-                    "name": c.get("name"),
-                    "value": c.get("value"),
-                    "domain": c.get("domain", ".instagram.com"),
-                    "path": c.get("path", "/")
-                })
-            # Also parse Cookie header string
-            for h in req.get("headers", []):
-                if h.get("name", "").lower() == "cookie":
-                    cookie_str = h.get("value", "")
-                    for item in cookie_str.split(";"):
-                        if "=" in item:
-                            name, val = item.strip().split("=", 1)
-                            cookies.append({
-                                "name": name,
-                                "value": val,
-                                "domain": ".instagram.com",
-                                "path": "/"
-                            })
-
-        # Filter unique cookies
-        unique_cookies = {c["name"]: c for c in cookies if c.get("name")}
-        if "sessionid" in unique_cookies:
-            print("[+] Successfully extracted session cookies from HAR file!")
-            return list(unique_cookies.values())
-        else:
-            print("[!] No 'sessionid' cookie found in HAR file.")
-    except Exception as e:
-        print(f"[!] Error parsing HAR file: {e}")
-
-    return None
 
 
 def get_stealth_driver(headless=False):
@@ -194,36 +138,18 @@ def is_logged_in(driver):
 
 
 def login_to_instagram(driver, username, password):
-    print("[+] Navigating to Instagram login...")
-    driver.get("https://www.instagram.com/accounts/login/")
-    time.sleep(4)
-
-    # Check if cookies or profile already logged us in
+    print("[+] Checking Instagram session...")
     if is_logged_in(driver):
-        print("[+] Already logged in!")
+        print(f"[+] Already logged in as @{username}!")
         save_session_cookies(driver)
         return True
 
-    # Check for HAR cookies
-    har_cookies = extract_cookies_from_har(HAR_FILE)
-    if har_cookies:
-        print("[+] Applying HAR file cookies to browser session...")
-        driver.get("https://www.instagram.com/")
-        time.sleep(2)
-        for c in har_cookies:
-            try:
-                driver.add_cookie(c)
-            except Exception:
-                pass
-        driver.refresh()
-        time.sleep(3)
-        if is_logged_in(driver):
-            print("[+] Logged in using HAR file cookies!")
-            save_session_cookies(driver)
-            return True
+    print(f"[+] Navigating to Instagram login for @{username}...")
+    driver.get("https://www.instagram.com/accounts/login/")
+    time.sleep(4)
 
-    # Try input fields
-    print("[+] Attempting login with credentials...")
+    # Perform credential login
+    print(f"[+] Logging in with credentials from credentials.txt (@{username})...")
     try:
         user_inputs = driver.find_elements(By.CSS_SELECTOR, "input[name='email'], input[name='username'], input[type='text']")
         pass_inputs = driver.find_elements(By.CSS_SELECTOR, "input[name='pass'], input[name='password'], input[type='password']")
@@ -246,7 +172,6 @@ def login_to_instagram(driver, username, password):
 
             time.sleep(1)
 
-            # Look for submit button or press Enter
             login_divs = driver.find_elements(By.XPATH, "//div[@role='button'][contains(., 'Log in')] | //button[contains(., 'Log in')]")
             if login_divs:
                 driver.execute_script("arguments[0].click();", login_divs[0])
@@ -258,21 +183,19 @@ def login_to_instagram(driver, username, password):
     except Exception as e:
         print(f"[!] Login form interaction error: {e}")
 
-    # Check if login succeeded or if user intervention is required
     if is_logged_in(driver):
-        print("[+] Login successful!")
+        print(f"[+] Login successful for @{username}!")
         save_session_cookies(driver)
         return True
     else:
         curr_url = driver.current_url
         if "auth_platform" in curr_url or "challenge" in curr_url or "two_factor" in curr_url or "login" in curr_url:
-            print("\n[!] Instagram requested verification or additional login steps.")
-            print("[!] Please complete the login/verification in the opened browser window...")
-            # Wait up to 60s for user to complete login manually if needed
+            print("\n[!] Instagram requested security verification.")
+            print("[!] Please complete the login in the opened browser window...")
             for _ in range(12):
                 time.sleep(5)
                 if is_logged_in(driver):
-                    print("[+] Manual verification/login detected as complete!")
+                    print(f"[+] Manual verification/login detected as complete for @{username}!")
                     save_session_cookies(driver)
                     return True
         return False
@@ -282,12 +205,11 @@ def like_stories(username, password, usernames):
     driver = get_stealth_driver(headless=False)
 
     try:
-        # Load saved cookies if available
         cookie_loaded = load_saved_cookies(driver)
         if not cookie_loaded or not is_logged_in(driver):
             success = login_to_instagram(driver, username, password)
             if not success:
-                print("[!] Unable to log in. Please verify credentials or complete security verification.")
+                print("[!] Unable to log in. Please verify credentials in credentials.txt.")
                 return
 
         print(f"\n[+] Starting story liker for {len(usernames)} user(s)...")
@@ -298,8 +220,6 @@ def like_stories(username, password, usernames):
             driver.get(story_url)
             time.sleep(4)
 
-            # Check if story is available
-            # Strategy 1: Check for "View story" button
             view_story_btns = driver.find_elements(By.XPATH, "//div[contains(text(),'View story')] | //div[contains(text(),'View Story')] | //button[contains(., 'View')]")
             if view_story_btns:
                 print(f"[+] Found 'View Story' button for {follower}. Clicking...")
@@ -309,14 +229,12 @@ def like_stories(username, password, usernames):
                 except Exception:
                     pass
 
-            # Check if story is already liked (aria-label="Unlike")
             unlikes = driver.find_elements(By.CSS_SELECTOR, "svg[aria-label='Unlike']")
             if unlikes:
                 print(f"[INFO] Story of {follower} is already liked!")
                 remove_username_from_file(follower, FOLLOWERS_FILE)
                 continue
 
-            # Multi-strategy search for Like button on story
             like_button = None
             strategies = [
                 (By.XPATH, "//svg[@aria-label='Like']/ancestor::*[@role='button' or self::button or self::div][1]"),
@@ -349,14 +267,12 @@ def like_stories(username, password, usernames):
                     except Exception as e:
                         print(f"[!] Failed to click like button for {follower}: {e}")
             else:
-                # Check if "This story is unavailable" or standard story wrapper exists
                 page_text = driver.page_source.lower()
                 if "story unavailable" in page_text or "this story is unavailable" in page_text or "not found" in page_text:
                     print(f"[FALSE] User -> {follower} has no active story or story is unavailable.")
                 else:
                     print(f"[?] Like button not found for {follower} (story may have finished or requires interaction).")
 
-            # Remove follower from file after processing
             remove_username_from_file(follower, FOLLOWERS_FILE)
 
     finally:
@@ -368,16 +284,14 @@ if __name__ == "__main__":
     print("           Instagram Story Liker - Enhanced 2026           ")
     print("=" * 60)
 
-    # Credentials handling
     credentials = load_credentials()
     if credentials is None:
         username, password = prompt_credentials()
     else:
         username, password = credentials
 
-    print(f"[+] Loaded Username: {username}")
+    print(f"[+] Loaded Username from credentials.txt: {username}")
 
-    # Read followers list
     usernames = read_usernames_from_file(FOLLOWERS_FILE)
     if not usernames:
         print(f"[!] '{FOLLOWERS_FILE}' is empty or contains no valid usernames.")
