@@ -151,7 +151,7 @@ def login_to_instagram(driver, username, password):
     driver.get("https://www.instagram.com/accounts/login/")
     time.sleep(4)
 
-    print(f"[+] Logging in with credentials from credentials.txt (@{username})...")
+    print(f"[+] Entering credentials from credentials.txt (@{username})...")
     try:
         user_inputs = driver.find_elements(By.CSS_SELECTOR, "input[name='email'], input[name='username'], input[type='text']")
         pass_inputs = driver.find_elements(By.CSS_SELECTOR, "input[name='pass'], input[name='password'], input[type='password']")
@@ -176,47 +176,27 @@ def login_to_instagram(driver, username, password):
 
             login_divs = driver.find_elements(By.XPATH, "//div[@role='button'][contains(., 'Log in')] | //button[contains(., 'Log in')]")
             if login_divs:
-                driver.execute_script("arguments[0].click();", login_divs[0])
+                try:
+                    driver.execute_script("arguments[0].click();", login_divs[0])
+                except Exception:
+                    pass
             else:
                 p_in.send_keys(Keys.RETURN)
 
-            print("[+] Login form submitted. Waiting 8s for redirection...")
-            time.sleep(8)
+            print("\n" + "=" * 60)
+            print(f"[+] Credentials filled & login tapped for @{username}!")
+            print("[+] Waiting 40 seconds for login completion...")
+            print("=" * 60)
+
+            for i in range(10):
+                time.sleep(4)
+                print(f"[+] Waiting for login completion... ({(i + 1) * 4}s / 40s)")
+                if is_logged_in(driver):
+                    print(f"[+] Login successful for @{username}!")
+                    save_session_cookies(driver)
+                    return True
     except Exception as e:
         print(f"[!] Login form interaction error: {e}")
-
-    if is_logged_in(driver):
-        print(f"[+] Login successful for @{username}!")
-        save_session_cookies(driver)
-        return True
-
-    # 2FA / Security Verification detection & 40 seconds wait
-    curr_url = driver.current_url.lower()
-    page_text = driver.page_source.lower()
-    is_2fa = (
-        "two_factor" in curr_url
-        or "challenge" in curr_url
-        or "auth_platform" in curr_url
-        or "verification" in curr_url
-        or "security code" in page_text
-        or "two-factor" in page_text
-        or "enter the code" in page_text
-        or "login" in curr_url
-    )
-
-    if is_2fa:
-        print("\n" + "=" * 60)
-        print("[!] TWO-FACTOR AUTHENTICATION / SECURITY CODE REQUIRED!")
-        print("[!] Waiting 40 seconds for you to enter the 2FA code in the browser...")
-        print("=" * 60)
-
-        for i in range(10):
-            time.sleep(4)
-            print(f"[+] Waiting for 2FA completion... ({ (i + 1) * 4 }s / 40s)")
-            if is_logged_in(driver):
-                print(f"[+] 2FA / Verification complete! Logged in as @{username}.")
-                save_session_cookies(driver)
-                return True
 
     if is_logged_in(driver):
         print(f"[+] Login successful for @{username}!")

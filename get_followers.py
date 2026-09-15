@@ -148,45 +148,27 @@ def login_if_needed(driver):
 
         login_divs = driver.find_elements(By.XPATH, "//div[@role='button'][contains(., 'Log in')] | //button[contains(., 'Log in')]")
         if login_divs:
-            driver.execute_script("arguments[0].click();", login_divs[0])
+            try:
+                driver.execute_script("arguments[0].click();", login_divs[0])
+            except Exception:
+                pass
         else:
             p_in.send_keys(Keys.RETURN)
 
-        time.sleep(8)
-    except Exception as e:
-        print(f"[!] Login error: {e}")
-
-    if is_logged_in(driver):
-        save_session_cookies(driver)
-        return True
-
-    # 2FA / Security Verification detection & 40 seconds wait
-    curr_url = driver.current_url.lower()
-    page_text = driver.page_source.lower()
-    is_2fa = (
-        "two_factor" in curr_url
-        or "challenge" in curr_url
-        or "auth_platform" in curr_url
-        or "verification" in curr_url
-        or "security code" in page_text
-        or "two-factor" in page_text
-        or "enter the code" in page_text
-        or "login" in curr_url
-    )
-
-    if is_2fa:
         print("\n" + "=" * 60)
-        print("[!] TWO-FACTOR AUTHENTICATION / SECURITY CODE REQUIRED!")
-        print("[!] Waiting 40 seconds for you to enter the 2FA code in the browser...")
+        print(f"[+] Credentials filled & login tapped for @{username}!")
+        print("[+] Waiting 40 seconds for login completion...")
         print("=" * 60)
 
         for i in range(10):
             time.sleep(4)
-            print(f"[+] Waiting for 2FA completion... ({ (i + 1) * 4 }s / 40s)")
+            print(f"[+] Waiting for login completion... ({(i + 1) * 4}s / 40s)")
             if is_logged_in(driver):
-                print(f"[+] 2FA / Verification complete! Logged in as @{username}.")
+                print(f"[+] Login successful for @{username}!")
                 save_session_cookies(driver)
                 return True
+    except Exception as e:
+        print(f"[!] Login error: {e}")
 
     if is_logged_in(driver):
         save_session_cookies(driver)
